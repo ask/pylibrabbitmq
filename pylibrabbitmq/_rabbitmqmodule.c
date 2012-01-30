@@ -34,19 +34,20 @@
     })
 
 #define PySTRING_FROM_AMQBYTES(member)                              \
+    ({                                                              \
         PyString_FromStringAndSize(member.bytes, member.len);       \
+    })
 
-#define PyDICT_SETKEY_AMQTABLE(dict, k, v, table, stmt)             \
+#define PyDICT_SETKVSTR_AMQTABLE(dict, k, v, table, stmt)           \
         PyDICT_SETSTRKEY_DECREF(dict, k, v,                         \
-            PySTRING_FROM_AMQBYTES(table->headers.entries[i].key),  \
+            PySTRING_FROM_AMQBYTES(table.entries[i].key),  \
             stmt);                                                  \
 
 #define AMQTable_HVAL(table, index, typ)   \
-    table->headers.entries[index].value.value.typ
+    table.entries[index].value.value.typ
 
 
-
-
+/* AMQTable_AddEntry */
 _PYRMQ_INLINE amqp_table_entry_t *AMQTable_AddEntry(amqp_connection_state_t state,
         amqp_table_t *table, amqp_bytes_t key) {
     amqp_table_entry_t *entry = &table->entries[table->num_entries];
@@ -55,6 +56,8 @@ _PYRMQ_INLINE amqp_table_entry_t *AMQTable_AddEntry(amqp_connection_state_t stat
     return entry;
 }
 
+
+/* AMQTable_SetStringValue */
 void AMQTable_SetStringValue(amqp_connection_state_t state,
         amqp_table_t *table, amqp_bytes_t key, amqp_bytes_t value) {
     amqp_table_entry_t *entry = AMQTable_AddEntry(state, table, key);
@@ -62,6 +65,8 @@ void AMQTable_SetStringValue(amqp_connection_state_t state,
     entry->value.value.bytes = value;
 }
 
+
+/* AMQTable_SetIntValue */
 void AMQTable_SetIntValue(amqp_connection_state_t state,
         amqp_table_t *table, amqp_bytes_t key, int value) {
     amqp_table_entry_t *entry = AMQTable_AddEntry(state, table, key);
@@ -323,6 +328,67 @@ error:
 }
 
 
+/* AMQTable_to_PyDict */
+void AMQTable_to_PyDict(amqp_table_t table, PyObject *dest) {
+    int i = 0;
+    PyObject *key = NULL;
+    PyObject *value = NULL;
+
+    for (i = 0; i < table.num_entries; ++i) {
+        switch (table.entries[i].value.kind) {
+            case AMQP_FIELD_KIND_BOOLEAN:
+                PyDICT_SETKVSTR_AMQTABLE(dest, key, value, table,
+                    PyBool_FromLong(AMQTable_HVAL(table, i, boolean)));
+                break;
+            case AMQP_FIELD_KIND_I8:
+                PyDICT_SETKVSTR_AMQTABLE(dest, key, value, table,
+                    PyInt_FromLong(AMQTable_HVAL(table, i, i8)));
+                break;
+            case AMQP_FIELD_KIND_I16:
+                PyDICT_SETKVSTR_AMQTABLE(dest, key, value, table,
+                    PyInt_FromLong(AMQTable_HVAL(table, i, i16)));
+                break;
+            case AMQP_FIELD_KIND_I32:
+                PyDICT_SETKVSTR_AMQTABLE(dest, key, value, table,
+                    PyInt_FromLong(AMQTable_HVAL(table, i, i32)));
+                break;
+            case AMQP_FIELD_KIND_I64:
+                PyDICT_SETKVSTR_AMQTABLE(dest, key, value, table,
+                    PyLong_FromLong(AMQTable_HVAL(table, i, i64)));
+                break;
+            case AMQP_FIELD_KIND_U8:
+                PyDICT_SETKVSTR_AMQTABLE(dest, key, value, table,
+                    PyLong_FromUnsignedLong(AMQTable_HVAL(table, i, u8)));
+                break;
+            case AMQP_FIELD_KIND_U16:
+                PyDICT_SETKVSTR_AMQTABLE(dest, key, value, table,
+                    PyLong_FromUnsignedLong(AMQTable_HVAL(table, i, u16)));
+                break;
+            case AMQP_FIELD_KIND_U32:
+                PyDICT_SETKVSTR_AMQTABLE(dest, key, value, table,
+                    PyLong_FromUnsignedLong(AMQTable_HVAL(table, i, u32)));
+                break;
+            case AMQP_FIELD_KIND_U64:
+                PyDICT_SETKVSTR_AMQTABLE(dest, key, value, table,
+                    PyLong_FromUnsignedLong(AMQTable_HVAL(table, i, u64)));
+                break;
+            case AMQP_FIELD_KIND_F32:
+                PyDICT_SETKVSTR_AMQTABLE(dest, key, value, table,
+                    PyFloat_FromDouble(AMQTable_HVAL(table, i, f32)));
+                break;
+            case AMQP_FIELD_KIND_F64:
+                PyDICT_SETKVSTR_AMQTABLE(dest, key, value, table,
+                    PyFloat_FromDouble(AMQTable_HVAL(table, i, f64)));
+                break;
+            case AMQP_FIELD_KIND_UTF8:
+                PyDICT_SETKVSTR_AMQTABLE(dest, key, value, table,
+                    PySTRING_FROM_AMQBYTES(AMQTable_HVAL(table, i, bytes)));
+                break;
+        }
+    }
+}
+
+
 /* basic_properties_to_PyDict */
 void basic_properties_to_PyDict(amqp_basic_properties_t *props,
         PyObject *p) {
@@ -330,7 +396,6 @@ void basic_properties_to_PyDict(amqp_basic_properties_t *props,
     PyObject *key = NULL;
     PyObject *value = NULL;
     PyObject *h = NULL;
-    h = PyDict_New();
 
     if (props->_flags & AMQP_BASIC_CONTENT_TYPE_FLAG) {
         PyDICT_SETSTR_DECREF(p, "content_type", value,
@@ -381,64 +446,11 @@ void basic_properties_to_PyDict(amqp_basic_properties_t *props,
             PyInt_FromLong(props->timestamp));
     }
 
-    PyDICT_SETSTR_DECREF(p, "headers", h, PyDict_New());
-
+    h = PyDict_New();
     if (props->_flags & AMQP_BASIC_HEADERS_FLAG) {
-        int i;
-
-        for (i = 0; i < props->headers.num_entries; ++i) {
-            switch (props->headers.entries[i].value.kind) {
-                case AMQP_FIELD_KIND_BOOLEAN:
-                    PyDICT_SETKEY_AMQTABLE(h, key, value, props,
-                        PyBool_FromLong(AMQTable_HVAL(props, i, boolean)));
-                    break;
-                case AMQP_FIELD_KIND_I8:
-                    PyDICT_SETKEY_AMQTABLE(h, key, value, props,
-                        PyInt_FromLong(AMQTable_HVAL(props, i, i8)));
-                    break;
-                case AMQP_FIELD_KIND_I16:
-                    PyDICT_SETKEY_AMQTABLE(h, key, value, props,
-                        PyInt_FromLong(AMQTable_HVAL(props, i, i16)));
-                    break;
-                case AMQP_FIELD_KIND_I32:
-                    PyDICT_SETKEY_AMQTABLE(h, key, value, props,
-                        PyInt_FromLong(AMQTable_HVAL(props, i, i32)));
-                    break;
-                case AMQP_FIELD_KIND_I64:
-                    PyDICT_SETKEY_AMQTABLE(h, key, value, props,
-                        PyLong_FromLong(AMQTable_HVAL(props, i, i64)));
-                    break;
-                case AMQP_FIELD_KIND_U8:
-                    PyDICT_SETKEY_AMQTABLE(h, key, value, props,
-                        PyLong_FromUnsignedLong(AMQTable_HVAL(props, i, u8)));
-                    break;
-                case AMQP_FIELD_KIND_U16:
-                    PyDICT_SETKEY_AMQTABLE(h, key, value, props,
-                        PyLong_FromUnsignedLong(AMQTable_HVAL(props, i, u16)));
-                    break;
-                case AMQP_FIELD_KIND_U32:
-                    PyDICT_SETKEY_AMQTABLE(h, key, value, props,
-                        PyLong_FromUnsignedLong(AMQTable_HVAL(props, i, u32)));
-                    break;
-                case AMQP_FIELD_KIND_U64:
-                    PyDICT_SETKEY_AMQTABLE(h, key, value, props,
-                        PyLong_FromUnsignedLong(AMQTable_HVAL(props, i, u64)));
-                    break;
-                case AMQP_FIELD_KIND_F32:
-                    PyDICT_SETKEY_AMQTABLE(h, key, value, props,
-                        PyFloat_FromDouble(AMQTable_HVAL(props, i, f32)));
-                    break;
-                case AMQP_FIELD_KIND_F64:
-                    PyDICT_SETKEY_AMQTABLE(h, key, value, props,
-                        PyFloat_FromDouble(AMQTable_HVAL(props, i, f64)));
-                    break;
-                case AMQP_FIELD_KIND_UTF8:
-                    PyDICT_SETKEY_AMQTABLE(h, key, value, props,
-                        PySTRING_FROM_AMQBYTES(AMQTable_HVAL(props, i, bytes)));
-                    break;
-            }
-        }
+        AMQTable_to_PyDict(props->headers, h);
     }
+    PyDICT_SETSTR_DECREF(p, "headers", h, PyDict_New());
 }
 
 
@@ -498,47 +510,8 @@ int PyDict_to_basic_properties(PyObject *p, amqp_basic_properties_t *props,
         props->_flags |= AMQP_BASIC_TIMESTAMP_FLAG;
     }
     if ((value = PyDict_GetItemString(p, "headers")) != NULL) {
-        PyObject *py_key = NULL;
-        PyObject *py_value = NULL;
-        Py_ssize_t size = 0;
-        Py_ssize_t pos = 0;
-
-        char *ckey = NULL;
-        char *cstring_value = NULL;
-        uint64_t clong_value = 0;
-
-        size = PyDict_Size(value);
-
-        // allocate new table
-        props->headers.entries = amqp_pool_alloc(&conn->frame_pool,
-                size * sizeof(amqp_table_entry_t));
-        props->headers.num_entries = 0;
-
-        while (PyDict_Next(value, &pos, &py_key, &py_value)) {
-            ckey = PyString_AsString(py_key);
-
-            // Int | Long
-            if (PyLong_Check(py_value) || PyInt_Check(py_value)) {
-                clong_value = (int64_t)PyLong_AsLong(py_value);
-                AMQTable_SetIntValue(conn, &props->headers,
-                        amqp_cstring_bytes(ckey), clong_value);
-            }
-
-            // str (not unicode)
-            else if (PyString_Check(py_value)) {
-                cstring_value = PyString_AsString(py_value);
-                AMQTable_SetStringValue(conn, &props->headers,
-                        amqp_cstring_bytes(ckey),
-                        amqp_cstring_bytes(cstring_value));
-            }
-
-            // unsupported type
-            else {
-                PyErr_Format(PyExc_ValueError,
-                        "Table member %s is of an unsupported type", ckey);
-                goto error;
-            }
-        }
+       if (!PyDict_to_AMQTable(conn, value, &props->headers))
+            goto error;
     }
 
     Py_XDECREF(value);
@@ -547,6 +520,54 @@ error:
     return 0;
 }
 
+
+/* PyDict_to_AMQTable */
+int PyDict_to_AMQTable(amqp_connection_state_t conn,
+        PyObject *src, amqp_table_t *dest) {
+    PyObject *py_key = NULL;
+    PyObject *py_value = NULL;
+    Py_ssize_t size = 0;
+    Py_ssize_t pos = 0;
+
+    char *ckey = NULL;
+    char *cstring_value = NULL;
+    uint64_t clong_value = 0;
+
+    size = PyDict_Size(src);
+
+    // allocate new table
+    dest->entries = amqp_pool_alloc(&conn->frame_pool,
+            size * sizeof(amqp_table_entry_t));
+    dest->num_entries = 0;
+
+    while (PyDict_Next(src, &pos, &py_key, &py_value)) {
+        ckey = PyString_AsString(py_key);
+
+        // Int | Long
+        if (PyLong_Check(py_value) || PyInt_Check(py_value)) {
+            clong_value = (int64_t)PyLong_AsLong(py_value);
+            AMQTable_SetIntValue(conn, dest,
+                    amqp_cstring_bytes(ckey), clong_value);
+            printf("KEY: %s,  LONG: %lu\n", ckey, clong_value);
+        }
+
+        // str (not unicode)
+        else if (PyString_Check(py_value)) {
+            cstring_value = PyString_AsString(py_value);
+            AMQTable_SetStringValue(conn, dest,
+                    amqp_cstring_bytes(ckey),
+                    amqp_cstring_bytes(cstring_value));
+        }
+
+        // unsupported type
+        else {
+            PyErr_Format(PyExc_ValueError,
+                    "Table member %s is of an unsupported type", ckey);
+            return 0;
+        }
+    }
+    return 1;
+}
 
 /* recv */
 int PyRabbitMQ_recv(PyObject *p, amqp_connection_state_t conn, int piggyback) {
@@ -1222,18 +1243,18 @@ static int PyRabbitMQ_wait_timeout(int sockfd, double timeout) {
 static PyObject *PyRabbitMQ_Connection_basic_get(PyRabbitMQ_Connection *self,
         PyObject *args, PyObject *kwargs) {
     char *queue = NULL;
-    int noack = 0;
+    int no_ack = 0;
     int channel = 0;
     amqp_rpc_reply_t reply;
 
-    static char *kwlist[] = {"queue", "noack", "channel", NULL};
+    static char *kwlist[] = {"queue", "no_ack", "channel", NULL};
     if (PyArg_ParseTupleAndKeywords(args, kwargs, "sii", kwlist,
-                &queue, &noack, &channel)) {
+                &queue, &no_ack, &channel)) {
 
         Py_BEGIN_ALLOW_THREADS;
         reply = amqp_basic_get(self->conn, channel,
                            amqp_cstring_bytes(queue),
-                           noack);
+                           no_ack);
         Py_END_ALLOW_THREADS;
 
         if (!PyRabbitMQ_handle_amqp_error(reply,

@@ -46,6 +46,8 @@ amqp_table_entry_t *AMQTable_AddEntry(amqp_connection_state_t,
         amqp_table_t *, amqp_bytes_t);
 int PyDict_to_basic_properties(PyObject *, amqp_basic_properties_t *,
                                 amqp_connection_state_t);
+void AMQTable_to_PyDict(amqp_table_t, PyObject *);
+int PyDict_to_AMQTable(amqp_connection_state_t, PyObject *, amqp_table_t *);
 
 
 /* Exceptions */
